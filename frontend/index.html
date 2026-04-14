@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en" x-data="app()" x-init="init()">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>localrag</title>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0e0e0e;
+    --bg2:       #161616;
+    --bg3:       #1e1e1e;
+    --border:    #2a2a2a;
+    --border2:   #333333;
+    --text:      #d4d0c8;
+    --muted:     #6b6860;
+    --amber:     #e8a030;
+    --amber-dim: #7a5218;
+    --green:     #4caf7d;
+    --red:       #e05c5c;
+    --radius:    6px;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Layout ── */
+  .shell {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    grid-template-rows: 48px 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Topbar ── */
+  .topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+  .topbar-logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--amber);
+    letter-spacing: 0.05em;
+  }
+  .topbar-logo span { color: var(--muted); }
+  .topbar-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .status-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.error  { background: var(--red); }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    font-family: var(--mono);
+    border-left: 2px solid transparent;
+    transition: color 0.15s, background 0.15s;
+    user-select: none;
+  }
+  .nav-item:hover { color: var(--text); background: var(--bg3); }
+  .nav-item.active { color: var(--amber); border-left-color: var(--amber); background: rgba(232,160,48,0.05); }
+  .nav-icon { width: 16px; height: 16px; opacity: 0.7; flex-shrink: 0; }
+  .nav-item.active .nav-icon { opacity: 1; }
+
+  .sidebar-docs {
+    margin-top: auto;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .sidebar-docs-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding: 0 4px;
+  }
+  .doc-pill {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    border-radius: var(--radius);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-family: var(--mono);
+    gap: 6px;
+  }
+  .doc-pill-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .doc-pill-chunks { color: var(--muted); flex-shrink: 0; }
+  .doc-pill-delete {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    transition: color 0.15s;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .doc-pill:hover .doc-pill-delete {
+    opacity: 1;
+    pointer-events: all;
+    color: var(--red);
+  }
+  .doc-pill-delete:hover svg { stroke-width: 2; }
+  .doc-pill-delete:disabled { cursor: not-allowed; opacity: 0.3; }
+  .doc-empty { font-size: 11px; font-family: var(--mono); color: var(--muted); padding: 4px 8px; font-style: italic; }
+
+  /* ── Main panel ── */
+  .main { overflow: hidden; display: flex; flex-direction: column; }
+
+  /* ── Chat ── */
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+  .chat-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .chat-empty-title {
+    font-size: 20px;
+    color: var(--border2);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    font-family: var(--sans);
+  }
+
+  .message { display: flex; flex-direction: column; gap: 4px; max-width: 760px; }
+  .message.user { align-self: flex-end; align-items: flex-end; }
+  .message.assistant { align-self: flex-start; align-items: flex-start; }
+
+  .msg-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .msg-bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    line-height: 1.7;
+    font-size: 14px;
+  }
+  .message.user .msg-bubble {
+    background: rgba(232,160,48,0.1);
+    border: 1px solid var(--amber-dim);
+    color: var(--text);
+  }
+  .message.assistant .msg-bubble {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg-bubble.streaming::after {
+    content: '▋';
+    color: var(--amber);
+    animation: blink 0.8s step-end infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  .chat-input-area {
+    padding: 16px 32px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .chat-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    transition: border-color 0.15s;
+  }
+  .chat-input-row:focus-within { border-color: var(--amber-dim); }
+  .chat-textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    resize: none;
+    min-height: 22px;
+    max-height: 160px;
+    line-height: 1;
+  }
+  .chat-textarea::placeholder { color: var(--muted); }
+  .send-btn {
+    flex-shrink: 0;
+    width: 32px; height: 32px;
+    background: var(--amber);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity 0.15s;
+  }
+  .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .send-btn:not(:disabled):hover { opacity: 0.85; }
+  .send-btn svg { width: 14px; height: 14px; color: #000; }
+
+  /* ── Upload ── */
+  .panel { padding: 32px; flex: 1; overflow-y: auto; }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel-title::after { content:''; flex:1; height:1px; background: var(--border); }
+
+  .upload-zone {
+    border: 1px dashed var(--border2);
+    border-radius: var(--radius);
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--amber); background: rgba(232,160,48,0.04); }
+  .upload-zone input[type=file] { position:absolute;inset:0;opacity:0;cursor:pointer; }
+  .upload-zone-icon { font-size: 28px; margin-bottom: 10px; }
+  .upload-zone-label { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+  .upload-zone-sub { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  .url-row { display:flex; gap:8px; margin-top: 16px; }
+  .text-input {
+    flex: 1;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .text-input:focus { border-color: var(--amber-dim); }
+  .text-input::placeholder { color: var(--muted); }
+
+  .btn {
+    padding: 9px 16px;
+    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+  }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-primary { background: var(--amber); color: #000; }
+  .btn-primary:not(:disabled):hover { opacity: 0.85; }
+  .btn-ghost {
+    background: var(--bg3);
+    color: var(--text);
+    border: 1px solid var(--border2);
+  }
+  .btn-ghost:not(:disabled):hover { border-color: var(--text); }
+  .btn-danger { background: rgba(224,92,92,0.15); color: var(--red); border: 1px solid rgba(224,92,92,0.3); }
+  .btn-danger:not(:disabled):hover { background: rgba(224,92,92,0.25); }
+
+  .log-box {
+    margin-top: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 80px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    line-height: 1.8;
+    word-break: break-word;
+  }
+  .log-line-ok { color: var(--green); }
+  .log-line-err { color: var(--red); font-weight: 500; }
+  .log-line-info { color: var(--amber); }
+
+  /* ── Docs table ── */
+  .docs-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .docs-table th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .docs-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .docs-table tr:last-child td { border-bottom: none; }
+  .docs-table tr:hover td { background: var(--bg3); }
+  .table-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+
+  .doc-delete-btn {
+    width: 24px;
+    height: 24px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    transition: color 0.15s;
+    border-radius: 4px;
+  }
+  .doc-delete-btn:hover:not(:disabled) {
+    color: var(--red);
+    background: rgba(224,92,92,0.1);
+  }
+  .doc-delete-btn svg { width: 14px; height: 14px; }
+  .doc-delete-btn:disabled { cursor: not-allowed; opacity: 0.4; }
+
+  /* ── Settings ── */
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .setting-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .setting-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .setting-desc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .setting-input { width: 100%; }
+  input[type=range] { width: 100%; accent-color: var(--amber); cursor: pointer; }
+  .range-val { font-family: var(--mono); font-size: 12px; color: var(--amber); float: right; }
+  select.text-input { cursor: pointer; }
+  option { background: var(--bg2); }
+
+  .save-bar {
+    margin-top: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .save-msg { font-family: var(--mono); font-size: 12px; color: var(--green); }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { border-color: rgba(224,92,92,0.4); color: var(--red); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* Section separator */
+  .sep { height: 1px; background: var(--border); margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-logo">local<span>/</span>rag</div>
+    <div class="topbar-status">
+      <div class="status-dot" :class="ollamaStatus"></div>
+      <span x-text="ollamaStatus === 'online' ? 'ollama running' : ollamaStatus === 'error' ? 'ollama offline' : 'checking...'"></span>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div style="padding: 8px 0;">
+      <div class="nav-item" :class="{ active: page === 'chat' }" @click="saveScroll(); page = 'chat'; restoreScroll()">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M2 3h12v8H9l-3 2.5V11H2V3z"/>
+        </svg>
+        chat
+      </div>
+      <div class="nav-item" :class="{ active: page === 'upload' }" @click="saveScroll(); page = 'upload'; loadDocs(); restoreScroll()">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 11V3m-3 3 3-3 3 3M3 13h10"/>
+        </svg>
+        documents
+      </div>
+      <div class="nav-item" :class="{ active: page === 'settings' }" @click="saveScroll(); page = 'settings'; loadConfig(); restoreScroll()">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2.5"/>
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M3.1 12.9l1.4-1.4M11.5 4.5l1.4-1.4"/>
+        </svg>
+        settings
+      </div>
+    </div>
+
+    <!-- Indexed docs sidebar -->
+    <div class="sidebar-docs">
+      <div class="sidebar-docs-title">indexed</div>
+      <template x-if="docs.length === 0">
+        <div class="doc-empty">no documents</div>
+      </template>
+      <template x-for="doc in docs" :key="doc.name">
+        <div class="doc-pill">
+          <span class="doc-pill-name" :title="doc.name" x-text="doc.name"></span>
+          <span class="doc-pill-chunks" x-text="doc.chunks + 'c'"></span>
+          <button 
+            class="doc-pill-delete" 
+            @click.stop="deleteDoc(doc.name)" 
+            :title="'Delete ' + doc.name"
+            :disabled="indexing">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M2 4h12M6 7v4M10 7v4M3 4l1 10c0 1 .9 2 2 2h4c1.1 0 2-1 2-2l1-10M7 4V3c0-.5.5-1 1-1h0c.5 0 1 .5 1 1v1"/>
+            </svg>
+          </button>
+        </div>
+      </template>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ── Chat ── -->
+    <template x-if="page === 'chat'">
+      <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+
+        <div class="chat-messages" x-ref="msgContainer" @scroll="saveScroll()">
+          <template x-if="messages.length === 0">
+            <div class="chat-empty">
+              <div class="chat-empty-title">localrag</div>
+              <div>index a document, then ask anything about it</div>
+            </div>
+          </template>
+          <template x-for="(msg, i) in messages" :key="i">
+            <div class="message" :class="msg.role">
+              <div class="msg-label" x-text="msg.role === 'user' ? 'you' : 'rag'"></div>
+              <div class="msg-bubble" :class="{ streaming: msg.streaming }" x-text="msg.content"></div>
+            </div>
+          </template>
+        </div>
+
+        <div class="chat-input-area">
+          <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+            <button class="btn btn-ghost" @click="clearChat()" style="font-size: 11px; padding: 6px 12px;" :disabled="messages.length === 0">
+              clear chat
+            </button>
+            <span style="font-family: var(--mono); font-size: 10px; color: var(--muted);" x-text="messages.length + ' message' + (messages.length !== 1 ? 's' : '')"></span>
+          </div>
+          <div class="chat-input-row">
+            <textarea
+              class="chat-textarea"
+              x-ref="textarea"
+              x-model="input"
+              placeholder="ask something about your document…"
+              rows="1"
+              @keydown.enter.prevent="if(!$event.shiftKey && !streaming) sendMessage()"
+              @input="autoResize($refs.textarea)"
+              :disabled="streaming"
+            ></textarea>
+            <button class="send-btn" @click="sendMessage()" :disabled="!input.trim() || streaming">
+              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 12V2M2 7l5-5 5 5"/>
+              </svg>
+            </button>
+          </div>
+          <div style="margin-top:6px; font-family:var(--mono); font-size:10px; color:var(--muted); padding: 0 2px;">
+            enter to send · shift+enter for new line
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ── Documents ── -->
+    <template x-if="page === 'upload'">
+      <div class="panel">
+        <div class="panel-title">documents</div>
+
+        <!-- File drop zone -->
+        <div class="upload-zone"
+          :class="{ drag: dragging }"
+          @dragover.prevent="dragging = true"
+          @dragleave="dragging = false"
+          @drop.prevent="handleDrop($event)">
+          <input type="file" accept=".pdf,.txt,.md" @change="handleFileSelect($event)">
+          <div class="upload-zone-icon">⬆</div>
+          <div class="upload-zone-label">drop a file or click to browse</div>
+          <div class="upload-zone-sub">.pdf · .txt · .md</div>
+        </div>
+
+        <!-- URL input -->
+        <div class="url-row">
+          <input
+            type="text"
+            class="text-input"
+            placeholder="or paste a URL (e.g. gutenberg.org/…)"
+            x-model="urlInput"
+            @keydown.enter="indexUrl()"
+          >
+          <button class="btn btn-primary" @click="indexUrl()" :disabled="!urlInput.trim() || indexing">
+            <span x-text="indexing ? 'indexing…' : 'index url'"></span>
+          </button>
+        </div>
+
+        <!-- Log output -->
+        <div class="log-box" x-ref="logBox" x-show="logLines.length > 0">
+          <template x-for="(line, i) in logLines" :key="i">
+            <div :class="'log-line-' + line.type" x-text="line.text"></div>
+          </template>
+        </div>
+
+        <div class="sep"></div>
+        <div class="panel-title">indexed documents</div>
+
+        <template x-if="docs.length === 0">
+          <div style="font-family:var(--mono); font-size:13px; color:var(--muted); padding: 12px 0;">
+            no documents indexed yet
+          </div>
+        </template>
+
+        <template x-if="docs.length > 0">
+          <div>
+            <div class="table-wrap">
+              <table class="docs-table">
+                <thead>
+                  <tr>
+                    <th>filename</th>
+                    <th>chunks</th>
+                    <th style="width: 40px;"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="doc in docs" :key="doc.name">
+                    <tr>
+                      <td x-text="doc.name"></td>
+                      <td x-text="doc.chunks"></td>
+                      <td style="text-align: center; padding: 10px 6px;">
+                        <button 
+                          class="doc-delete-btn" 
+                          @click="deleteDoc(doc.name)"
+                          :title="'Delete ' + doc.name"
+                          :disabled="indexing">
+                          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M2 4h12M6 7v4M10 7v4M3 4l1 10c0 1 .9 2 2 2h4c1.1 0 2-1 2-2l1-10M7 4V3c0-.5.5-1 1-1h0c.5 0 1 .5 1 1v1"/>
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div style="margin-top:12px;">
+              <button class="btn btn-danger" @click="clearDocs()" :disabled="indexing">clear all documents</button>
+            </div>
+          </div>
+        </template>
+
+      </div>
+    </template>
+
+    <!-- ── Settings ── -->
+    <template x-if="page === 'settings'">
+      <div class="panel">
+        <div class="panel-title">model</div>
+        <div class="settings-grid">
+
+          <div class="setting-card">
+            <div class="setting-label">LLM model</div>
+            <div class="setting-desc">the Ollama model used to generate answers</div>
+            <select class="text-input setting-input" x-model="cfg.llm_model">
+              <option value="llama3.1:8b">llama3.1:8b</option>
+              <option value="llama3">llama3</option>
+              <option value="mistral">mistral</option>
+              <option value="mistral:7b">mistral:7b</option>
+              <option value="gemma2:9b">gemma2:9b</option>
+              <option value="gemma:2b">gemma:2b</option>
+              <option value="phi3">phi3</option>
+            </select>
+          </div>
+
+          <div class="setting-card">
+            <div class="setting-label">embedding model</div>
+            <div class="setting-desc">model used to embed chunks and queries</div>
+            <select class="text-input setting-input" x-model="cfg.embed_model">
+              <option value="nomic-embed-text">nomic-embed-text</option>
+              <option value="mxbai-embed-large">mxbai-embed-large</option>
+              <option value="all-minilm">all-minilm</option>
+            </select>
+          </div>
+
+        </div>
+
+        <div class="sep"></div>
+        <div class="panel-title">retrieval</div>
+        <div class="settings-grid">
+
+          <div class="setting-card">
+            <div class="setting-label">chunk size <span class="range-val" x-text="cfg.chunk_size"></span></div>
+            <div class="setting-desc">characters per chunk when indexing</div>
+            <input type="range" min="200" max="2000" step="50" x-model.number="cfg.chunk_size">
+          </div>
+
+          <div class="setting-card">
+            <div class="setting-label">top k <span class="range-val" x-text="cfg.top_k"></span></div>
+            <div class="setting-desc">chunks retrieved per question</div>
+            <input type="range" min="1" max="16" step="1" x-model.number="cfg.top_k">
+          </div>
+
+          <div class="setting-card">
+            <div class="setting-label">chunk overlap <span class="range-val" x-text="cfg.chunk_overlap"></span></div>
+            <div class="setting-desc">character overlap between chunks</div>
+            <input type="range" min="0" max="400" step="25" x-model.number="cfg.chunk_overlap">
+          </div>
+
+          <div class="setting-card">
+            <div class="setting-label">min similarity <span class="range-val" x-text="cfg.min_similarity"></span></div>
+            <div class="setting-desc">minimum relevance score (0 = disabled)</div>
+            <input type="range" min="0" max="0.9" step="0.05" x-model.number="cfg.min_similarity">
+          </div>
+
+        </div>
+
+        <div class="save-bar">
+          <button class="btn btn-primary" @click="saveConfig()" :disabled="saving">
+            <span x-text="saving ? 'saving…' : 'save settings'"></span>
+          </button>
+          <span class="save-msg" x-show="saveOk" x-transition>settings saved</span>
+        </div>
+
+        <div class="sep"></div>
+        <div class="panel-title">about</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--muted); line-height:2;">
+          <div>stack: fastapi · chromadb · ollama · nomic-embed-text</div>
+          <div>vector store: <span x-text="cfg.chroma_path || './chroma_db'"></span></div>
+          <div>collection: <span x-text="cfg.collection_name || 'local_rag'"></span></div>
+        </div>
+      </div>
+    </template>
+
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="toast" :class="{ show: toast.show, err: toast.err }" x-text="toast.msg"></div>
+
+<script>
+const API = 'http://localhost:8000';
+
+function app() {
+  return {
+    page: 'chat',
+    messages: [],
+    input: '',
+    streaming: false,
+    docs: [],
+    urlInput: '',
+    indexing: false,
+    dragging: false,
+    logLines: [],
+    ollamaStatus: 'checking',
+    scrollPositions: { chat: 0, upload: 0, settings: 0 },
+    cfg: {
+      llm_model: 'llama3.1:8b',
+      embed_model: 'nomic-embed-text',
+      chunk_size: 500,
+      chunk_overlap: 100,
+      top_k: 8,
+      min_similarity: 0.0,
+    },
+    saving: false,
+    saveOk: false,
+    toast: { show: false, msg: '', err: false },
+
+    async init() {
+      await this.checkOllama();
+      await this.loadDocs();
+      setInterval(() => this.checkOllama(), 15000);
+    },
+
+    async checkOllama() {
+      try {
+        const r = await fetch(`${API}/health`, { signal: AbortSignal.timeout(3000) });
+        this.ollamaStatus = r.ok ? 'online' : 'error';
+      } catch { this.ollamaStatus = 'error'; }
+    },
+
+    async sendMessage() {
+      const q = this.input.trim();
+      if (!q || this.streaming) return;
+
+      this.messages.push({ role: 'user', content: q });
+      this.input = '';
+      this.$nextTick(() => {
+        this.autoResize(this.$refs.textarea);
+        this.scrollToBottom();
+      });
+
+      const idx = this.messages.push({ role: 'assistant', content: '', streaming: true }) - 1;
+      this.streaming = true;
+      this.$nextTick(() => this.scrollToBottom());
+
+      try {
+        const res = await fetch(`${API}/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          this.messages[idx].content = err.detail || 'Error getting answer.';
+          this.messages[idx].streaming = false;
+          this.streaming = false;
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') break;
+            try {
+              const { token } = JSON.parse(data);
+              this.messages[idx].content += token;
+              this.$nextTick(() => this.scrollToBottom());
+            } catch {}
+          }
+        }
+      } catch (e) {
+        this.messages[idx].content = 'Could not reach the server. Is it running?';
+      }
+
+      this.messages[idx].streaming = false;
+      this.streaming = false;
+      this.$nextTick(() => this.scrollToBottom());
+    },
+
+    scrollToBottom() {
+      const el = this.$refs.msgContainer;
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+
+    autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    },
+
+    async loadDocs() {
+      try {
+        const r = await fetch(`${API}/documents`);
+        this.docs = r.ok ? await r.json() : [];
+      } catch { this.docs = []; }
+    },
+
+    async handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (file) await this.uploadFile(file);
+      e.target.value = '';
+    },
+
+    async handleDrop(e) {
+      this.dragging = false;
+      const file = e.dataTransfer.files[0];
+      if (file) await this.uploadFile(file);
+    },
+
+    async uploadFile(file) {
+      // Check file type first
+      const validTypes = ['.pdf', '.txt', '.md', '.text'];
+      const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+      if (!validTypes.includes(fileExt)) {
+        this.logLines = [
+          { type: 'err', text: `✗ unsupported file type: ${fileExt}` },
+          { type: 'info', text: `  supported types: ${validTypes.join(', ')}` }
+        ];
+        this.showToast(`Unsupported file type: ${fileExt}`, true);
+        return;
+      }
+
+      // Check file size (warn if > 20 MB)
+      const fileSizeMB = file.size / (1024 * 1024);
+      if (fileSizeMB > 20) {
+        this.logLines.push({ type: 'info', text: `⚠ large file (${fileSizeMB.toFixed(1)} MB) — indexing may take a while` });
+      }
+
+      this.indexing = true;
+      this.logLines = [{ type: 'info', text: `> indexing ${file.name}...` }];
+      const fd = new FormData();
+      fd.append('file', file);
+      
+      try {
+        const r = await fetch(`${API}/index`, { method: 'POST', body: fd });
+        const data = await r.json();
+        
+        if (r.ok) {
+          this.logLines.push({ type: 'ok', text: `✓ ${file.name} indexed successfully` });
+          this.showToast(`${file.name} indexed`);
+          await this.loadDocs();
+        } else {
+          const detail = data.detail || 'indexing failed';
+          this.logLines.push({ type: 'err', text: `✗ ${detail}` });
+          
+          // Add helpful suggestions for common errors
+          if (detail.includes('already indexed')) {
+            this.logLines.push({ type: 'info', text: '  hint: delete the document first if you want to re-index it' });
+          } else if (detail.includes('scanned') || detail.includes('image-only')) {
+            this.logLines.push({ type: 'info', text: '  hint: this PDF appears to be scanned (image-only)' });
+            this.logLines.push({ type: 'info', text: '  try converting it with OCR (e.g., ocrmypdf) first' });
+          } else if (detail.includes('encrypted') || detail.includes('password')) {
+            this.logLines.push({ type: 'info', text: '  hint: unlock the PDF first, then try uploading again' });
+          } else if (detail.includes('encoding')) {
+            this.logLines.push({ type: 'info', text: '  hint: the file may use an unsupported encoding' });
+          } else if (detail.includes('too large')) {
+            this.logLines.push({ type: 'info', text: '  hint: maximum file size is 100 MB' });
+          }
+          
+          this.showToast(detail, true);
+        }
+      } catch (e) {
+        this.logLines.push({ type: 'err', text: '✗ server unreachable' });
+        this.showToast('server unreachable', true);
+      }
+      
+      this.indexing = false;
+      this.$nextTick(() => {
+        if (this.$refs.logBox) this.$refs.logBox.scrollTop = this.$refs.logBox.scrollHeight;
+      });
+    },
+
+    async indexUrl() {
+      const url = this.urlInput.trim();
+      if (!url) return;
+      
+      this.indexing = true;
+      this.logLines = [{ type: 'info', text: `> fetching ${url}...` }];
+      
+      try {
+        const r = await fetch(`${API}/index?url=${encodeURIComponent(url)}`, { method: 'POST' });
+        const data = await r.json();
+        
+        if (r.ok) {
+          this.logLines.push({ type: 'ok', text: '✓ URL indexed successfully' });
+          this.urlInput = '';
+          this.showToast('URL indexed');
+          await this.loadDocs();
+        } else {
+          const detail = data.detail || 'failed to index URL';
+          this.logLines.push({ type: 'err', text: `✗ ${detail}` });
+          
+          // Add helpful suggestions
+          if (detail.includes('unsupported')) {
+            this.logLines.push({ type: 'info', text: '  supported types: .pdf, .txt, .md' });
+          } else if (detail.includes('Could not download')) {
+            this.logLines.push({ type: 'info', text: '  hint: check the URL and your internet connection' });
+          } else if (detail.includes('decode')) {
+            this.logLines.push({ type: 'info', text: '  hint: the file encoding may not be supported' });
+          }
+          
+          this.showToast(detail, true);
+        }
+      } catch {
+        this.logLines.push({ type: 'err', text: '✗ server unreachable' });
+        this.showToast('server unreachable', true);
+      }
+      
+      this.indexing = false;
+      this.$nextTick(() => {
+        if (this.$refs.logBox) this.$refs.logBox.scrollTop = this.$refs.logBox.scrollHeight;
+      });
+    },
+
+    async clearDocs() {
+      if (!confirm('Delete all indexed documents?')) return;
+      try {
+        const r = await fetch(`${API}/clear`, { method: 'DELETE' });
+        if (r.ok) {
+          this.docs = [];
+          this.showToast('all documents cleared');
+        }
+      } catch { this.showToast('server unreachable', true); }
+    },
+
+    async deleteDoc(docName) {
+      if (!confirm(`Delete "${docName}"?`)) return;
+      try {
+        const r = await fetch(`${API}/delete?document_name=${encodeURIComponent(docName)}`, { 
+          method: 'DELETE' 
+        });
+        if (r.ok) {
+          this.docs = this.docs.filter(d => d.name !== docName);
+          this.showToast(`${docName} deleted`);
+        } else {
+          const data = await r.json().catch(() => ({}));
+          this.showToast(data.detail || 'Failed to delete document', true);
+        }
+      } catch { 
+        this.showToast('server unreachable', true); 
+      }
+    },
+
+    async loadConfig() {
+      try {
+        const r = await fetch(`${API}/config`);
+        if (r.ok) this.cfg = await r.json();
+      } catch {}
+    },
+
+    async saveConfig() {
+      this.saving = true;
+      try {
+        const r = await fetch(`${API}/config`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.cfg),
+        });
+        if (r.ok) {
+          this.saveOk = true;
+          setTimeout(() => this.saveOk = false, 2500);
+        } else {
+          this.showToast('failed to save', true);
+        }
+      } catch { this.showToast('server unreachable', true); }
+      this.saving = false;
+    },
+
+    showToast(msg, err = false) {
+      this.toast = { show: true, msg, err };
+      setTimeout(() => this.toast.show = false, 2800);
+    },
+
+    clearChat() {
+      if (!confirm('Clear all chat messages?')) return;
+      this.messages = [];
+      this.scrollPositions.chat = 0;
+      this.showToast('chat cleared');
+    },
+
+    saveScroll() {
+      if (this.$refs.msgContainer) {
+        this.scrollPositions[this.page] = this.$refs.msgContainer.scrollTop;
+      }
+    },
+
+    restoreScroll() {
+      this.$nextTick(() => {
+        if (this.$refs.msgContainer && this.scrollPositions[this.page] !== undefined) {
+          this.$refs.msgContainer.scrollTop = this.scrollPositions[this.page];
+        }
+      });
+    },
+  };
+}
+</script>
+</body>
+</html>

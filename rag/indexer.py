@@ -49,17 +49,23 @@ class Indexer:
 
         path = Path(file_path)
         if not path.exists():
-            print(f"[error] File not found: {file_path}")
-            return
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Check file size (limit to 100 MB)
+        file_size_mb = path.stat().st_size / (1024 * 1024)
+        if file_size_mb > 100:
+            raise ValueError(f"File too large: {file_size_mb:.1f} MB (max 100 MB)")
 
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            self._index(path, self._extract_pdf_text(path), file_type="PDF")
+            text = self._extract_pdf_text(path)
+            self._index(path, text, file_type="PDF")
         elif suffix in (".txt", ".text", ".md"):
-            self._index(path, self._extract_text_file(path), file_type="text")
+            text = self._extract_text_file(path)
+            self._index(path, text, file_type="text")
         else:
-            print(
-                f"[error] Unsupported file type '{suffix}'. Supported: .pdf, .txt, .md"
+            raise ValueError(
+                f"Unsupported file type '{suffix}'. Supported: .pdf, .txt, .md"
             )
 
     def index_url(self, url: str) -> None:
@@ -69,19 +75,19 @@ class Indexer:
         suffix = Path(parsed.path).suffix.lower()
 
         if suffix not in (".txt", ".text", ".md", ".pdf", ""):
-            print(
-                f"[error] Unsupported URL file type '{suffix}'. Supported: .pdf, .txt, .md"
+            raise ValueError(
+                f"Unsupported URL file type '{suffix}'. Supported: .pdf, .txt, .md"
             )
-            return
 
         print(f"[download] Fetching: {url}")
         try:
             with urllib.request.urlopen(url, timeout=30) as response:
                 raw_bytes = response.read()
                 content_type = response.headers.get("Content-Type", "")
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Could not download URL: {e}")
         except Exception as e:
-            print(f"[error] Could not download URL: {e}")
-            return
+            raise RuntimeError(f"Download failed: {e}")
 
         # Detect PDF by content-type or magic bytes even if URL has no extension
         is_pdf = (
@@ -99,9 +105,10 @@ class Indexer:
                 # Use the original URL filename as the display name in metadata
                 display_path = Path(tmpdir) / filename
                 display_path.write_bytes(raw_bytes)
+                text = self._extract_pdf_text(tmp_path)
                 self._index(
                     display_path,
-                    self._extract_pdf_text(tmp_path),
+                    text,
                     file_type="PDF (URL)",
                 )
             else:
@@ -114,8 +121,9 @@ class Indexer:
                     except UnicodeDecodeError:
                         continue
                 if text is None:
-                    print("[error] Could not decode downloaded content as text.")
-                    return
+                    raise ValueError(
+                        "Could not decode downloaded content as text (unknown encoding)"
+                    )
                 tmp_path = Path(tmpdir) / filename
                 tmp_path.write_text(text, encoding="utf-8")
                 self._index(tmp_path, text, file_type="text (URL)")
@@ -130,12 +138,16 @@ class Indexer:
 
         existing = self.collection.get(where={"source": str(path.name)}, limit=1)
         if existing["ids"]:
-            print(f"[skip] '{path.name}' is already indexed. Use `clear` to re-index.")
-            return
+            raise ValueError(
+                f"'{path.name}' is already indexed. Delete it first to re-index."
+            )
 
-        if not text.strip():
-            print(f"[error] No text could be extracted from '{path.name}'.")
-            return
+        if not text or not text.strip():
+            raise ValueError(
+                f"No text could be extracted from '{path.name}'. "
+                f"For PDFs, this often means the document is scanned (image-only). "
+                f"Try converting it with OCR first."
+            )
 
         print(f"[1/4] Read {file_type} file: {path.name} ({len(text):,} characters)")
 
@@ -179,6 +191,28 @@ class Indexer:
             count = sum(1 for m in all_meta if m["source"] == s)
             print(f"  • {s}  ({count} chunks)")
 
+    def delete_document(self, document_name: str) -> bool:
+        """Delete a single indexed document by name.
+
+        Args:
+            document_name: The filename of the document to delete (e.g., 'example.pdf')
+
+        Returns:
+            True if document was found and deleted, False otherwise
+        """
+        # Find all chunks belonging to this document
+        results = self.collection.get(where={"source": document_name}, include=[])
+
+        if not results["ids"]:
+            print(f"[error] Document '{document_name}' not found in index.")
+            return False
+
+        # Delete all chunks for this document
+        self.collection.delete(ids=results["ids"])
+        chunk_count = len(results["ids"])
+        print(f"✓ Deleted '{document_name}' ({chunk_count} chunks removed from index).")
+        return True
+
     def clear(self) -> None:
         confirm = input(
             "This will delete all indexed documents. Type 'yes' to confirm: "
@@ -192,21 +226,50 @@ class Indexer:
     # ── Internals ──────────────────────────────────────────────────────────────
 
     def _extract_pdf_text(self, path: Path) -> str:
-        pages = []
-        with pdfplumber.open(path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if text:
-                    pages.append(f"[Page {i + 1}]\n{text}")
-        return "\n\n".join(pages)
+        """Extract text from PDF with detailed error handling."""
+        try:
+            pages = []
+            with pdfplumber.open(path) as pdf:
+                if not pdf.pages:
+                    raise ValueError("PDF has no pages")
+
+                for i, page in enumerate(pdf.pages):
+                    try:
+                        text = page.extract_text()
+                        if text:
+                            pages.append(f"[Page {i + 1}]\n{text}")
+                    except Exception as e:
+                        print(f"[warn] Could not extract page {i + 1}: {e}")
+
+            return "\n\n".join(pages)
+
+        except ValueError as e:
+            raise ValueError(f"PDF parsing error: {e}")
+        except Exception as e:
+            # Check if it's an encryption/permission error
+            error_str = str(e).lower()
+            if (
+                "encrypt" in error_str
+                or "password" in error_str
+                or "permission" in error_str
+            ):
+                raise ValueError(
+                    "This PDF is encrypted or password-protected. "
+                    "Please unlock it first before uploading."
+                )
+            raise ValueError(f"Could not read PDF file: {e}")
 
     def _extract_text_file(self, path: Path) -> str:
+        """Extract text from text file with encoding fallback."""
         for encoding in ("utf-8", "utf-8-sig", "latin-1"):
             try:
                 return path.read_text(encoding=encoding)
             except UnicodeDecodeError:
                 continue
-        raise ValueError(f"Could not decode '{path.name}' — unknown encoding.")
+        raise ValueError(
+            f"Could not decode '{path.name}' with common encodings (utf-8, latin-1). "
+            f"The file may be corrupted or use an unsupported encoding."
+        )
 
     def _embed_chunks(self, chunks: list[str]) -> list[list[float]]:
         embeddings = []
